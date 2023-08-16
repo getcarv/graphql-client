@@ -95,7 +95,11 @@ pub fn generate_module_token_stream(
         match lock.entry(query_path) {
             btree_map::Entry::Occupied(o) => o.get().clone(),
             btree_map::Entry::Vacant(v) => {
-                let query_string = read_file(v.key())?;
+                let query_path = v.key();
+                let query_string = read_file(query_path)?;
+                let mut imports = read_imports(query_path, &query_string)?;
+                imports.push(query_string);
+                let query_string = imports.join("\n");
                 let query = graphql_parser::parse_query(&query_string)
                     .map_err(|err| GeneralError(format!("Query parser error: {}", err)))?
                     .into_static();
@@ -191,6 +195,23 @@ fn read_file(path: &std::path::Path) -> Result<String, ReadFileError> {
             path: path.display().to_string(),
         })?;
     Ok(out)
+}
+
+/// Extract contents of the imports mentioned in the query file
+fn read_imports(path: &std::path::Path, contents: &str) -> Result<Vec<String>, BoxError> {
+    let mut import_strings = Vec::new();
+    let imports = regex::Regex::new(r#"^#import "(.*\.graphql)""#)?;
+    if let Some(captures) = imports.captures(contents) {
+        let (_, [import_path]) = captures.extract();
+        let import_path = std::path::Path::new(import_path);
+        let import_path = path
+            .parent()
+            .expect("File doesn't have a valid folder path")
+            .join(import_path)
+            .canonicalize()?;
+        import_strings.push(read_file(&import_path)?);
+    }
+    Ok(import_strings)
 }
 
 /// In derive mode, build an error when the operation with the same name as the struct is not found.
